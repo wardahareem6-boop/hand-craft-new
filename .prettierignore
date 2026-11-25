@@ -1,0 +1,7 @@
+node_modules
+.next
+.data
+package-lock.json
+SRS-plan.md
+AGENTS.md
+drizzle/*.sql

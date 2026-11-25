@@ -1,0 +1,90 @@
+name: made-and-found
+services:
+  database:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: marketplace
+      POSTGRES_USER: marketplace
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-demo-database-only}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U marketplace -d marketplace"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  mailpit:
+    image: axllent/mailpit:v1
+    ports:
+      - "127.0.0.1:8025:8025"
+    environment:
+      MP_DATABASE: /data/mailpit.db
+    volumes:
+      - mail_data:/data
+    restart: unless-stopped
+
+  initialize:
+    build:
+      context: .
+      target: tools
+    environment:
+      DATABASE_URL: postgresql://marketplace:${POSTGRES_PASSWORD:-local-demo-database-only}@database:5432/marketplace
+      NODE_ENV: development
+      DEMO_MODE: "true"
+      SEED_DEMO: "true"
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-LocalDemoCraft2026!}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@madeandfound.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-LocalDemoAdmin2026!}
+    depends_on:
+      database:
+        condition: service_healthy
+    command: ["sh", "-c", "npm run db:migrate && npm run db:seed"]
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      target: runner
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      DATABASE_URL: postgresql://marketplace:${POSTGRES_PASSWORD:-local-demo-database-only}@database:5432/marketplace
+      NEXT_PUBLIC_SITE_URL: http://localhost:3000
+      DEMO_MODE: "true"
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_SECURE: "false"
+      EMAIL_FROM: "Made & Found <no-reply@madeandfound.test>"
+      JOBS_SECRET: ${JOBS_SECRET:-local-demo-worker-secret-change-for-deployment}
+    volumes:
+      - uploads:/app/.data/uploads
+    depends_on:
+      database:
+        condition: service_healthy
+      initialize:
+        condition: service_completed_successfully
+      mailpit:
+        condition: service_started
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      target: runner
+    command: ["node", "scripts/container-worker.mjs"]
+    environment:
+      JOBS_URL: http://app:3000/api/jobs
+      JOBS_SECRET: ${JOBS_SECRET:-local-demo-worker-secret-change-for-deployment}
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  uploads:
+  mail_data:
